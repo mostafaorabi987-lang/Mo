@@ -134,6 +134,32 @@
   #banner .txt span{ color:var(--muted); font-size:12.5px; }
   @keyframes slideIn{ from{ opacity:0; transform:translateY(-6px);} to{opacity:1; transform:translateY(0);} }
 
+  .loc-action{
+    margin:10px 20px 0; display:flex; gap:8px;
+  }
+  .loc-btn{
+    flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
+    background:var(--panel-2); border:1px solid var(--line); border-radius:12px;
+    padding:10px 12px; color:var(--text); font-family:'Cairo'; font-weight:700; font-size:13px;
+    cursor:pointer; transition: border-color .2s, background .2s;
+  }
+  .loc-btn:active{ transform:scale(0.98); }
+  .loc-btn.saved{ border-color:var(--safe); color:var(--safe); background:var(--safe-glow); }
+  .loc-status{ text-align:center; font-size:11.5px; color:var(--muted); margin-top:6px; font-family:'JetBrains Mono', monospace; }
+
+  .car-loc{
+    margin-top:8px; padding-top:8px; border-top:1px dashed var(--line);
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+  }
+  .car-loc a{
+    color:var(--safe); font-size:11.5px; text-decoration:none;
+    display:flex; align-items:center; gap:4px; font-family:'JetBrains Mono', monospace;
+  }
+  .car-loc .remove-loc{
+    color:var(--muted); font-size:11px; background:none; border:none; cursor:pointer;
+    font-family:'Tajawal';
+  }
+
   /* List */
   .list{ padding:16px 20px 100px; display:flex; flex-direction:column; gap:12px; }
   .count-row{
@@ -221,6 +247,11 @@
     <div class="txt" id="bannerTxt"><b>—</b><span>—</span></div>
   </div>
 
+  <div class="loc-action" id="locAction" style="display:none">
+    <button class="loc-btn" id="locBtn">📍 إضافة موقع لهذه السيارة</button>
+  </div>
+  <div class="loc-status" id="locStatus"></div>
+
   <div class="list">
     <div class="count-row">
       <span id="countLabel">عرض كل السيارات</span>
@@ -229,7 +260,7 @@
     <div id="cardsWrap"></div>
   </div>
 
-  <div class="hint">قاعدة بيانات تجريبية للعرض التوضيحي فقط</div>
+  <div class="hint">قاعدة بيانات تجريبية للعرض التوضيحي فقط — المواقع بتتحفظ على جهازك بس</div>
 </div>
 
 <script>
@@ -261,8 +292,13 @@ const bannerIcon = document.getElementById('bannerIcon');
 const bannerTxt = document.getElementById('bannerTxt');
 const countLabel = document.getElementById('countLabel');
 const totalLabel = document.getElementById('totalLabel');
+const locAction = document.getElementById('locAction');
+const locBtn = document.getElementById('locBtn');
+const locStatus = document.getElementById('locStatus');
 
 totalLabel.textContent = cars.length + ' سيارة مسجّلة';
+
+let currentMatch = null; // آخر سيارة متطابقة مع البحث الحالي
 
 function normalize(str){
   return (str||'')
@@ -274,6 +310,31 @@ function normalize(str){
     .replace(/\s+/g,' ')
     .trim()
     .toLowerCase();
+}
+
+// ---------- تخزين المواقع محليًا على الجهاز ----------
+function loadLocations(){
+  try{ return JSON.parse(localStorage.getItem('plateLocations') || '{}'); }
+  catch(e){ return {}; }
+}
+function saveLocations(obj){
+  try{ localStorage.setItem('plateLocations', JSON.stringify(obj)); }catch(e){}
+}
+function locKey(plate){ return normalize(plate).replace(/\s/g,''); }
+
+function getLocationFor(plate){
+  const all = loadLocations();
+  return all[locKey(plate)] || null;
+}
+function setLocationFor(plate, data){
+  const all = loadLocations();
+  all[locKey(plate)] = data;
+  saveLocations(all);
+}
+function removeLocationFor(plate){
+  const all = loadLocations();
+  delete all[locKey(plate)];
+  saveLocations(all);
 }
 
 function renderCards(matchQuery){
@@ -289,6 +350,16 @@ function renderCards(matchQuery){
     const card = document.createElement('div');
     card.className = 'card' + (car.wanted ? ' wanted' : '') + (q && !isMatch ? ' dim' : '') + (isMatch ? (car.wanted ? ' hit' : ' hit clear-hit') : '');
 
+    const loc = getLocationFor(car.plate);
+    const locHtml = loc
+      ? `<div class="car-loc">
+           <a href="https://maps.google.com/?q=${loc.lat},${loc.lng}" target="_blank" rel="noopener">
+             📍 ${loc.label ? loc.label + ' — ' : ''}${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}
+           </a>
+           <button class="remove-loc" data-plate="${car.plate}">إزالة</button>
+         </div>`
+      : '';
+
     card.innerHTML = `
       <div class="plate">
         <div class="num">${car.plate}</div>
@@ -300,6 +371,7 @@ function renderCards(matchQuery){
         <span class="badge ${car.wanted ? 'wanted' : 'clear'}">
           <span class="dot"></span>${car.wanted ? 'مطلوبة' : 'غير مطلوبة'}
         </span>
+        ${locHtml}
       </div>
     `;
     cardsWrap.appendChild(card);
@@ -307,6 +379,7 @@ function renderCards(matchQuery){
 
   if(q){
     countLabel.textContent = anyExactHit ? 'تم العثور على تطابق' : 'لا توجد نتائج مطابقة';
+    currentMatch = anyExactHit;
     if(anyExactHit){
       banner.classList.add('show');
       if(anyExactHit.wanted){
@@ -318,18 +391,69 @@ function renderCards(matchQuery){
         bannerIcon.textContent = '✓';
         bannerTxt.innerHTML = `<b>اللوحة غير مطلوبة</b><span>${anyExactHit.model} — ${anyExactHit.owner}</span>`;
       }
+      locAction.style.display = 'flex';
+      const existingLoc = getLocationFor(anyExactHit.plate);
+      locBtn.textContent = existingLoc ? '📍 تحديث الموقع لهذه السيارة' : '📍 إضافة موقع لهذه السيارة';
+      locBtn.classList.toggle('saved', !!existingLoc);
     } else {
       banner.className = '';
+      locAction.style.display = 'none';
+      locStatus.textContent = '';
     }
   } else {
     countLabel.textContent = 'عرض كل السيارات';
     banner.className = '';
+    currentMatch = null;
+    locAction.style.display = 'none';
+    locStatus.textContent = '';
   }
+
+  // ربط أزرار "إزالة" الموقع في كل الكروت
+  cardsWrap.querySelectorAll('.remove-loc').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      removeLocationFor(btn.dataset.plate);
+      renderCards(searchInput.value);
+    });
+  });
 }
 
 renderCards('');
 
 searchInput.addEventListener('input', e => renderCards(e.target.value));
+
+// ---------- زرار إضافة الموقع ----------
+locBtn.addEventListener('click', () => {
+  if(!currentMatch) return;
+  if(!('geolocation' in navigator)){
+    locStatus.textContent = 'الجهاز/المتصفح ده مش بيدعم تحديد الموقع';
+    return;
+  }
+  locStatus.textContent = '📡 بيحدد موقعك الحالي...';
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude, longitude } = pos.coords;
+      const label = window.prompt('اسم/وصف اختياري للموقع (زي: كمين الطريق الدائري) — اتركه فاضي لو مش عايز', '');
+      setLocationFor(currentMatch.plate, {
+        lat: latitude,
+        lng: longitude,
+        label: (label || '').trim(),
+        timestamp: new Date().toISOString(),
+      });
+      locStatus.textContent = '✅ اتحفظ الموقع بنجاح';
+      renderCards(searchInput.value);
+    },
+    (err) => {
+      const reasons = {
+        1: 'الإذن مرفوض — سمح للمتصفح بالوصول لموقعك من الإعدادات',
+        2: 'مش قادر يحدد موقعك دلوقتي، جرب تاني',
+        3: 'استغرق وقت طويل، جرب تاني',
+      };
+      locStatus.textContent = reasons[err.code] || 'حصل خطأ في تحديد الموقع';
+    },
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+});
 
 // Voice search
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
